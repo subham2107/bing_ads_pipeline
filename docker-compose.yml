@@ -1,0 +1,46 @@
+# Two containers: the MySQL warehouse and a single-container Airflow (`standalone` =
+# scheduler + webserver + triggerer, SQLite metadata). Fine for a local MVP; for production
+# swap in the official multi-service compose / Helm chart with Postgres + CeleryExecutor.
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: bing_dw
+      MYSQL_USER: warehouse
+      MYSQL_PASSWORD: warehouse
+      MYSQL_ROOT_PASSWORD: root
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports: ["3307:3306"]            # host 3307 -> avoids clashing with a local MySQL
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      retries: 20
+
+  airflow:
+    build: .
+    depends_on:
+      mysql: {condition: service_healthy}
+    environment:
+      PYTHONPATH: /opt/airflow/include
+      PROJECT_ROOT: /opt/airflow
+      WAREHOUSE_URL: mysql+pymysql://warehouse:warehouse@mysql:3306/bing_dw?charset=utf8mb4
+      BING_RAW_FILE: /opt/airflow/data/raw/BING_MultiDays.csv
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    ports: ["8080:8080"]
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./include:/opt/airflow/include
+      - ./sql:/opt/airflow/sql
+      - ./data:/opt/airflow/data
+      - ./work:/opt/airflow/work
+    command: standalone
+  
+  adminer:
+    image: adminer
+    depends_on: [mysql]
+    ports: ["8081:8080"]
+
+volumes:
+  mysql_data:
